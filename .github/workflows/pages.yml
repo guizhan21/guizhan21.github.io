@@ -117,8 +117,14 @@ jobs:
       - name: Install Firefox and an actual audio output service
         if: matrix.browser == 'firefox'
         run: |
-          npx playwright install --with-deps firefox
-          sudo apt-get install -y pulseaudio pulseaudio-utils
+          npx playwright install firefox
+          if ! node --input-type=module -e "import {firefox} from 'playwright'; const browser=await firefox.launch(); await browser.close();"; then
+            npx playwright install-deps firefox
+          fi
+          if ! sudo apt-get install -y pulseaudio pulseaudio-utils; then
+            sudo apt-get update
+            sudo apt-get install -y pulseaudio pulseaudio-utils
+          fi
           export XDG_RUNTIME_DIR="$RUNNER_TEMP/audio-runtime"
           mkdir -p "$XDG_RUNTIME_DIR"
           chmod 700 "$XDG_RUNTIME_DIR"
