@@ -121,9 +121,11 @@ jobs:
           if ! node --input-type=module -e "import {firefox} from 'playwright'; const browser=await firefox.launch(); await browser.close();"; then
             npx playwright install-deps firefox
           fi
-          if ! sudo apt-get install -y pulseaudio pulseaudio-utils; then
+          # Firefox loads the system FFmpeg AAC decoder at playback time;
+          # a successful browser launch alone does not prove M4A support.
+          if ! sudo apt-get install -y pulseaudio pulseaudio-utils libavcodec60; then
             sudo apt-get update
-            sudo apt-get install -y pulseaudio pulseaudio-utils
+            sudo apt-get install -y pulseaudio pulseaudio-utils libavcodec60
           fi
           export XDG_RUNTIME_DIR="$RUNNER_TEMP/audio-runtime"
           mkdir -p "$XDG_RUNTIME_DIR"
