@@ -1,0 +1,152 @@
+name: Publish verified library at short URL
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Successful source main Pages workflow run (empty uses latest)
+        type: string
+        required: false
+      force:
+        description: Rebuild even if the verified source is unchanged
+        type: boolean
+        default: false
+  schedule:
+    - cron: '17 * * * *'
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: daily-reading-root-pages
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+      pages: write
+      id-token: write
+    outputs:
+      changed: ${{ steps.source.outputs.needed }}
+      sha: ${{ steps.source.outputs.sha }}
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: node --test tests/*.test.mjs
+      - name: Select an already verified source version
+        id: source
+        run: node scripts/select-source.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          FORCE: ${{ inputs.force }}
+      - uses: actions/checkout@v4
+        if: steps.source.outputs.needed == 'true'
+        with:
+          repository: guizhan21/daily-reading-github-test
+          ref: ${{ steps.source.outputs.sha }}
+          path: library
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        if: steps.source.outputs.needed == 'true'
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: library/package-lock.json
+      - name: Build the same approved library for the root path
+        if: steps.source.outputs.needed == 'true'
+        working-directory: library
+        run: |
+          npm ci --ignore-scripts
+          npm run validate
+          npm test
+          npm run build:root
+          node scripts/acceptance.mjs --root
+      - name: Record the actual source and catalog identity
+        if: steps.source.outputs.needed == 'true'
+        run: node scripts/publication.mjs
+      - uses: actions/configure-pages@v5
+        if: steps.source.outputs.needed == 'true'
+      - uses: actions/upload-pages-artifact@v3
+        if: steps.source.outputs.needed == 'true'
+        with:
+          path: library/dist-root
+      - uses: actions/deploy-pages@v4
+        if: steps.source.outputs.needed == 'true'
+        id: deployment
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: source-publication-proof
+          path: |
+            source-proof.json
+            library/dist-root/publication.json
+  external:
+    needs: publish
+    if: needs.publish.outputs.changed == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chrome, firefox, webkit]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: guizhan21/daily-reading-github-test
+          ref: ${{ needs.publish.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Use the real Chrome supplied by the runner, installing only if absent
+        if: matrix.browser == 'chrome'
+        run: |
+          if ! command -v google-chrome || ! command -v xvfb-run; then
+            npx playwright install --with-deps chrome
+          fi
+          google-chrome --version
+          command -v xvfb-run
+      - name: Install Firefox and an actual audio output service
+        if: matrix.browser == 'firefox'
+        run: |
+          npx playwright install --with-deps firefox
+          sudo apt-get install -y pulseaudio pulseaudio-utils
+          export XDG_RUNTIME_DIR="$RUNNER_TEMP/audio-runtime"
+          mkdir -p "$XDG_RUNTIME_DIR"
+          chmod 700 "$XDG_RUNTIME_DIR"
+          echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
+          pulseaudio --start --exit-idle-time=-1
+          pactl load-module module-null-sink sink_name=ci_audio
+          pactl set-default-sink ci_audio
+      - name: Verify actual short URL and Release playback
+        if: matrix.browser != 'webkit'
+        run: npm run test:browser
+        env:
+          BROWSER: ${{ matrix.browser }}
+          SITE_URL: https://guizhan21.github.io/
+      - name: Verify real hidden-tab chapter continuation
+        if: matrix.browser == 'chrome'
+        run: xvfb-run -a node tests/background.mjs
+        env:
+          BROWSER: chrome
+          SITE_URL: https://guizhan21.github.io/
+      - name: Verify actual short URL with the official WebKit runtime
+        if: matrix.browser == 'webkit'
+        run: |
+          docker run --rm --init -v "$PWD:/work" -w /work -e BROWSER=webkit \
+            -e SITE_URL=https://guizhan21.github.io/ \
+            mcr.microsoft.com/playwright:v1.64.1-noble@sha256:47b510dd9230bf0b9bfc9b20102241e577ea7a99334ab4c3ca19f19770e9b8ea \
+            node tests/browser.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: short-url-${{ matrix.browser }}
+          path: test-results
