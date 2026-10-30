@@ -1,8 +1,9 @@
 import fs from 'node:fs';
 import {sourceRepository,validateRun,validateJobs,rootVerified} from './source-policy.mjs';
-const repository=sourceRepository,api='https://api.github.com/',requested=process.env.SOURCE_RUN_ID||'';
+import {githubMetadata} from './github-metadata.mjs';
+const repository=sourceRepository,requested=process.env.SOURCE_RUN_ID||'';
 if(requested&&!/^\d+$/.test(requested))throw Error('Expected numeric source workflow run ID');
-async function github(endpoint){const headers={Accept:'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'};if(process.env.GH_TOKEN)headers.Authorization='Bearer '+process.env.GH_TOKEN;const r=await fetch(api+endpoint,{headers});if(!r.ok)throw Error('GitHub metadata request failed: '+r.status);return r.json();}
+const github=endpoint=>githubMetadata(endpoint,{token:process.env.GH_TOKEN,onRetry:entry=>console.log(JSON.stringify(entry))});
 const run=requested?await github('repos/'+repository+'/actions/runs/'+requested):(await github('repos/'+repository+'/actions/workflows/pages.yml/runs?branch=main&status=success&per_page=1')).workflow_runs[0];
 validateRun(run);
 const jobs=(await github('repos/'+repository+'/actions/runs/'+run.id+'/attempts/'+run.run_attempt+'/jobs?per_page=100')).jobs;
