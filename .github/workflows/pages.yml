@@ -80,6 +80,9 @@ jobs:
       - uses: actions/deploy-pages@v4
         if: steps.source.outputs.needed == 'true'
         id: deployment
+      - name: Wait for byte-consistent public publication before playback tests
+        if: steps.source.outputs.needed == 'true'
+        run: node scripts/wait-publication.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -87,6 +90,7 @@ jobs:
           path: |
             source-proof.json
             library/dist-root/publication.json
+            publication-readiness.json
   external:
     needs: publish
     if: needs.publish.outputs.changed == 'true'
